@@ -4,7 +4,7 @@ A fully autonomous quantitative investment system that combines four analytical 
 
 Named after my grandfather — a hard-working and thrifty man whose values inspire this project.
 
-> **Status**: Live paper trading on Alpaca Markets (v1.9.35)
+> **Status**: Live paper trading on Alpaca Markets (v1.9.37)
 > **Stack**: Python 3.12, FastAPI, SQLAlchemy, PyTorch, XGBoost, structlog
 > **Universe**: 500+ US equities (S&P 500), 8 crypto pairs, 100+ international stocks, macro indicators
 
@@ -29,6 +29,7 @@ Named after my grandfather — a hard-working and thrifty man whose values inspi
             ┌──────────────▼───────────────┐
             │     CONSENSUS ENGINE         │
             │  Horizon-adaptive weighting  │
+            │  + insider boost + regime    │
             │  S(h) = Σ wᵢ(h) · scoreᵢ   │
             └──────────────┬───────────────┘
                            │
@@ -49,13 +50,13 @@ The key insight: a 1-day trade and a 3-year position live in fundamentally diffe
 Scrapes financial news from Google Finance, preprocesses articles through a local LLM (DeepSeek-R1:1.5b via Ollama), then scores them with a fine-tuned DeBERTa-v3 transformer. Includes Bayesian source reliability calibration and exponential recency decay.
 
 ### 2. ML Engine
-An ensemble of XGBoost (gradient-boosted trees) and LSTM (recurrent neural network with LayerNorm, positional encoding, and horizon conditioning). Trained on 50+ technical features per ticker. Produces directional confidence scores with uncertainty bounds (MC dropout).
+An ensemble of XGBoost (gradient-boosted trees) and LSTM (recurrent neural network with LayerNorm, positional encoding, and horizon conditioning). Trained on 28 features per ticker (19 technical + 2 regime + 7 fundamental). Produces directional confidence scores with uncertainty bounds (MC dropout).
 
 ### 3. Math Engine
-Multi-model Monte Carlo simulation (5 models: GBM, Student-t, jump diffusion, Heston stochastic volatility, bootstrap) for expected return estimation. Dynamic take-profit/stop-loss from simulation percentiles. Full risk metrics: VaR, CVaR, GARCH volatility.
+Multi-model Monte Carlo simulation (5 models: GBM, Student-t, jump diffusion, Heston stochastic volatility, bootstrap) for expected return estimation. Dynamic take-profit/stop-loss from simulation percentiles. Full risk metrics: VaR, CVaR, GARCH volatility. **Market regime detection** via Hurst exponent (R/S analysis), Lyapunov exponent (Rosenstein's algorithm), and ADF stationarity test — classifies each ticker into mean-reverting, trending, chaotic, or random-walk regimes.
 
 ### 4. Analysis Engine (Fundamentals)
-DCF and Residual Income Model valuations using live financial data. Systematic screening (P/E, ROE, debt ratios, margins). Integrated into the consensus formula for long-horizon signals.
+DCF and Residual Income Model valuations using live financial data. Systematic screening (P/E, ROE, debt ratios, margins). SEC EDGAR insider trading analysis (Form 4 filings) with cluster detection. Integrated into the consensus formula for long-horizon signals.
 
 ---
 
@@ -68,6 +69,8 @@ S(h) = w_sentiment(h) · sentiment_score
      + w_ml(h)        · ml_score
      + w_math(h)      · math_score
      + w_analysis(h)  · analysis_score
+     + insider_boost                      # SEC Form 4 insider trading signal
+     + regime_boost                       # Market regime adjustment
 ```
 
 Where weights follow exponential curves parameterized by time constants:
@@ -76,7 +79,29 @@ Where weights follow exponential curves parameterized by time constants:
 - **Math** grows through 1-3 months (tau = 90 days)
 - **Analysis** dominates at 1 year+ (tau = 365 days)
 
+**Regime boost** adapts the signal to market conditions: contrarian in mean-reverting regimes (buy oversold, sell overbought), momentum-confirming in trending regimes, and dampening in chaotic regimes.
+
 A return-adjusted blend and Kelly criterion gate further refine signal quality.
+
+---
+
+## Market Regime Detection
+
+The system classifies each ticker's current market regime using three mathematical tools:
+
+| Metric | What it measures | Method |
+|--------|-----------------|--------|
+| **Hurst exponent (H)** | Memory in the time series | Rescaled Range (R/S) analysis |
+| **Lyapunov exponent (λ)** | Sensitivity to initial conditions | Rosenstein's algorithm |
+| **ADF test (p-value)** | Stationarity of returns | Augmented Dickey-Fuller regression |
+
+Combined classification:
+- **Mean-reverting** (H < 0.45, stationary): Buy at extremes, expect reversion
+- **Trending** (H > 0.55, λ > 0.01): Follow momentum
+- **Chaotic** (λ > 0.05): Reduce exposure, tighten stops
+- **Random walk**: No regime adjustment
+
+These metrics also feed into the ML feature vector, giving the LSTM and XGBoost models direct access to regime information.
 
 ---
 
@@ -128,15 +153,15 @@ A real-time web terminal served by the FastAPI backend.
 - **Fully local**: Runs on an 8GB MacBook Air. Sentiment inference, ML training, and Monte Carlo all on-device
 - **600+ tickers**: Real-time price feeds for S&P 500, crypto, international markets (Japan, UK, Germany, Spain, India, Argentina, Australia)
 - **21M+ signals**: Optimized SQLite queries with covering indexes for sub-second dashboard response
-- **35 iterations**: From first line of code to live trading in ~5 weeks, tracked via structured iteration documents
-- **743 tests**: Comprehensive test suite covering all engines, API endpoints, and trading logic
+- **37 iterations**: From first line of code to live trading in ~6 weeks, tracked via structured iteration documents
+- **779 tests**: Comprehensive test suite covering all engines, API endpoints, and trading logic
 - **Zero paid APIs**: Core intelligence runs entirely on open-source models (DeBERTa, XGBoost, PyTorch LSTM, DeepSeek-R1)
 
 ---
 
 ## Evolution
 
-The project evolved through 35 iterations, each building on the last:
+The project evolved through 37 iterations, each building on the last:
 
 | Phase | Iterations | What was built |
 |-------|-----------|----------------|
@@ -148,7 +173,7 @@ The project evolved through 35 iterations, each building on the last:
 | **6. Preprocessing** | 20-22 | Ollama LLM preprocessing, DeBERTa-v3 fine-tuned model, backend rename |
 | **7. Analysis** | 23-26 | DCF, RIM valuation, systematic screening, fundamentals integration |
 | **8. Trading Bot** | 27-31 | Alpaca execution, OCO exits, multi-model MC, dynamic TP/SL |
-| **9. Production** | 32-35 | Return-adjusted consensus, Kelly gate, position rotation, market regime, query optimization |
+| **9. Production** | 32-37 | Return-adjusted consensus, Kelly gate, position rotation, market regime, SEC EDGAR insider trading, regime detection (Hurst/Lyapunov/ADF) |
 
 ---
 
